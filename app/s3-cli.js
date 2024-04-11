@@ -1,15 +1,17 @@
+const fs = require("fs");
+const path = require("path");
+const dotenv = require("dotenv");
+const envPath = path.resolve(__dirname, "..", ".env");
+dotenv.config({ path: envPath });
+const readlineSync = require("readline-sync");
 const { Command } = require("commander");
 const {
   S3Client,
   ListObjectsCommand,
   PutObjectCommand,
   DeleteObjectCommand,
+  HeadObjectCommand,
 } = require("@aws-sdk/client-s3");
-
-const path = require("path");
-const dotenv = require("dotenv");
-const envPath = path.resolve(__dirname, "..", ".env");
-dotenv.config({ path: envPath });
 
 const program = new Command();
 
@@ -20,7 +22,6 @@ const s3Client = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || undefined,
   },
 });
-
 const Bucket = "developer-task";
 const Prefix = "x-wing/";
 
@@ -29,10 +30,34 @@ const listFilesParams = {
   Prefix,
 };
 
-const uploadFile = async (filePath) => {
+const uploadFile = async (filePath, options) => {
   try {
+    const { overwrite } = options;
     const fileContent = fs.readFileSync(filePath);
     const fileName = path.basename(filePath);
+
+    if (!overwrite) {
+      // Sprawdź, czy plik już istnieje w Buckecie
+      const existsParams = {
+        Bucket,
+        Key: `${Prefix}${fileName}`,
+      };
+      const fileExists = await s3Client
+        .send(new HeadObjectCommand(existsParams))
+        .then(() => true)
+        .catch(() => false);
+
+      if (fileExists) {
+        // Jeśli plik już istnieje i nie została użyta flaga --overwrite, zapytaj użytkownika, czy chce go zastąpić
+        const answer = readlineSync.question(
+          "Plik już istnieje w Bucket. Czy chcesz go zastąpić? (t/n)"
+        );
+        if (answer.toLowerCase() !== "t" && answer.toLowerCase() !== "tak") {
+          console.log("Operacja została anulowana. Plik nie został przesłany.");
+          return;
+        }
+      }
+    }
 
     const params = {
       Bucket,
@@ -47,34 +72,60 @@ const uploadFile = async (filePath) => {
   }
 };
 
-const deleteFilesByRegex = async (regexPattern) => {
+// uploadFile("test.txt");
+const deleteFilesByRegex = async (options) => {
+  let regexPattern = null;
+  let fileName = null;
+
+  options.forEach((option, index) => {
+    switch (option) {
+      case "-rgx":
+        if (options[index + 1]) {
+          regexPattern = options[index + 1];
+        } else {
+          console.error("Nieprawidłowy format regexa");
+        }
+        break;
+      default:
+        fileName = option;
+        break;
+    }
+  });
+
+  console.log(regexPattern);
+
   try {
     const data = await s3Client.send(new ListObjectsCommand(listFilesParams));
-    data.Contents.forEach(async (obj) => {
-      let fileName = obj.Key;
-      console.log(fileName);
-      let fileParts = fileName.split("/"); // znowu dzielimy na tablicę
+    if (!data || !data.Contents || data.Contents.length === 0) {
+      console.log("Brak plików do usunięcia.");
+      return;
+    }
 
-      regexMatch = fileParts.some((part) =>
-        new RegExp(regexPattern).test(part)
-      );
-
-      if (regexMatch) {
+    for (const obj of data.Contents) {
+      const fileKey = obj.Key;
+      const fileParts = fileKey.split("/");
+      if (
+        (regexPattern && new RegExp(regexPattern).test(fileKey)) ||
+        (fileName && fileParts[fileParts.length - 1] === fileName)
+      ) {
         const deleteParams = {
           Bucket,
-          Prefix,
-          Key: fileName,
+          Key: fileKey,
         };
         try {
           const response = await s3Client.send(
             new DeleteObjectCommand(deleteParams)
           );
-          console.log(`Usunięto plik: ${fileName}`);
+          console.log(`Usunięto plik: ${fileKey}`);
+          // Jeśli usunięto plik o podanej nazwie, to kończymy funkcję
+          if (fileParts[fileParts.length - 1] === fileName) {
+            return;
+          }
         } catch (deleteErr) {
-          console.error(`Błąd podczas usuwania pliku ${fileName}:`, deleteErr);
+          console.error(`Błąd podczas usuwania pliku ${fileKey}:`, deleteErr);
         }
       }
-    });
+    }
   } catch (err) {
     console.error("Błąd", err);
   }
@@ -88,10 +139,11 @@ const listFiles = async (options) => {
   options.forEach((option, index) => {
     switch (option) {
       case "-rgx":
-        if (options[index + 1] && options[index + 1].startsWith("'")) {
-          regexPattern = options[index + 1].slice(1, -1);
+        if (options[index + 1]) {
+          regexPattern = options[index + 1];
+          console.log(regexPattern);
         } else {
-          console.error("Nieprawidłowy format regexa.");
+          console.error("Nieprawidłowy format regexa");
         }
         break;
       case "-m":
@@ -135,7 +187,7 @@ const listFiles = async (options) => {
   }
 };
 
-// listFiles("-m");
+// listFiles(["-m"]);
 
 program
   .command("list [options...]")
@@ -144,8 +196,28 @@ program
   .option("-m", "Wyświetla datę modyfikacji plików")
   .option("-s", "Wyświetla rozmiar plików")
   .action((command) => {
-    const options = program.args.slice(1);
+    const options = program.args;
     listFiles(options);
+  });
+
+program
+  .command("upload <filePath>")
+  .description("Przesyła plik do Bucketu")
+  .option("-o, --overwrite", "Nadpisuje istniejący plik bez pytania")
+  .action((filePath, options) => {
+    console.log("Przekazana ścieżka do przesyłanego pliku:", filePath);
+    const fullPath = path.resolve(filePath);
+    console.log("Pełna ścieżka do przesyłanego pliku:", fullPath);
+    uploadFile(fullPath, options);
+  });
+
+program
+  .command("delete [options...]")
+  .description("Usuwa pliki z Bucketu")
+  .option("-rgx <regex>", "Usuwa pliki pasujące do wyrażenia regularnego")
+  .action((command) => {
+    const options = program.args;
+    deleteFilesByRegex(options);
   });
 
 program.parse(process.argv);
