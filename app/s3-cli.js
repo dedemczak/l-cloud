@@ -1,5 +1,11 @@
+const {
+  S3Client,
+  ListObjectsCommand,
+  PutObjectCommand,
+} = require("@aws-sdk/client-s3");
+const fs = require("fs");
+
 require("dotenv").config();
-const { S3Client, ListObjectsCommand } = require("@aws-sdk/client-s3");
 
 const s3Client = new S3Client({
   region: "eu-west-1",
@@ -9,13 +15,13 @@ const s3Client = new S3Client({
   },
 });
 
-const bucketName = "developer-task";
-const objectPrefix = "x-wing/";
+const Bucket = "developer-task";
+const Prefix = "x-wing/";
 
 const listFiles = async () => {
   const params = {
-    Bucket: bucketName,
-    Prefix: objectPrefix,
+    Bucket,
+    Prefix,
   };
 
   try {
@@ -29,3 +35,20 @@ const listFiles = async () => {
 };
 
 listFiles();
+
+const main = async () => {
+  const command = new PutObjectCommand({
+    Bucket,
+    Key: Prefix + "hello-s3.txt",
+    Body: "Hello S3!",
+  });
+
+  try {
+    const response = await s3Client.send(command);
+    console.log(response);
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+main();
