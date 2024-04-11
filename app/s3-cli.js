@@ -1,34 +1,24 @@
-const { S3Client, ListObjectsCommand } = require("@aws-sdk/client-s3");
+const {
+  S3Client,
+  SharedIniFileCredentials,
+  ListObjectsCommand,
+} = require("@aws-sdk/client-s3");
 
-// Konfiguracja poświadczeń dostępu
-const credentials = {
-  accessKeyId: "AKIAVKNBWT6MRTC5NMY2",
-  secretAccessKey: "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",
-};
+const { fromIni } = require("@aws-sdk/credential-providers");
 
-// Tworzenie klienta S3
+const credentials = fromIni();
+
 const s3Client = new S3Client({
-  region: "us-east-1",
-  endpoint: "x-wing",
-  credentials,
+  region: "eu-west-1",
+  credentials: credentials,
 });
 
-// Funkcja do listowania wszystkich plików w kubełku S3
-async function listFiles() {
-  const params = {
-    Bucket: "developer-task",
-  };
-
-  try {
-    const data = await s3Client.send(new ListObjectsCommand(params));
-    console.log(
-      "Pliki w kubełku:",
-      data.Contents.map((obj) => obj.Key)
-    );
-  } catch (err) {
-    console.error("Błąd podczas listowania plików:", err);
-  }
-}
-
-// Wywołanie funkcji
-listFiles();
+s3Client
+  .send(new ListObjectsCommand({ Bucket: "developer-task" }))
+  .then((data) => {
+    console.log("sukces");
+    console.log("dane:", data);
+  })
+  .catch((err) => {
+    console.error("bład", err);
+  });
